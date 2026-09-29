@@ -4,6 +4,8 @@ import pandas as pd
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.core.database import engine, local_session
+from app.models.financial import Candle
+from sqlalchemy.dialects.postgresql import insert
 
 
 class MarketDataService:
@@ -12,14 +14,14 @@ class MarketDataService:
 
     def __init__(self, db_session: Optional[Session] = None):
 
-        self.db = db_session or local_session
+        self.db = db_session or local_session()
 
     def cleaned_klines(
             self,
             symbol: str = "BTCUSDT",
             interval: str = "1d", 
             limit: int = "365",
-            save_to_db: bool = True
+            save_to_db: bool = False
     ): 
         pd.DataFrame
 
@@ -62,7 +64,42 @@ class MarketDataService:
         df.sort_values("timestamp", inplace=True)
         df.reset_index(drop=True, inplace=True)
 
+        if save_to_db and self.db:
+            self.save_candle_to_db(df, symbol.upper(), interval.lower())
+
         return df
+
+    def save_candle_to_db(self, df: pd.DataFrame, symbol: str, interval: str):
+        """
+        Inserts or updates (upserts) cleaned candle data into PostgreSQL.
+        """
+        records = df.to_dict(orient="records")
+
+        for row in records:
+            chart_updater= insert(Candle).values(
+                symbol=symbol,
+                interval=interval,
+                timestamp=row["timestamp"],
+                open=row["open"],
+                high=row["high"],
+                low=row["low"],
+                close=row["close"],
+                volume=row["volume"]
+            )
+
+            chart_updater = chart_updater.on_conflict_do_update(
+                constraint="uq_symbol_interval_timestamp",
+                set_={
+                    "open": chart_updater.excluded.open,
+                    "high": chart_updater.excluded.high,
+                    "low": chart_updater.excluded.low,
+                    "close": chart_updater.excluded.close,
+                    "volume": chart_updater.excluded.volume,
+                }
+            )
+            self.db.execute(chart_updater)
+
+        self.db.commit()
 
 
 if __name__ == "__main__":

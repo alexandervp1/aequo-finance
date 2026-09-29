@@ -1,0 +1,2 @@
+table transactions parameters=
+(user_id, type, category, amount, description, transaction_date)

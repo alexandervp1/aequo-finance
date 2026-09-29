@@ -46,7 +46,7 @@ class Candle(Base):
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String(20), nullable=False, index=True)
     interval = Column(String(20), nullable=False, index=True)
-    timestamp = Column(datetime, nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
 
     open = Column(Numeric(precision=18, scale=8), nullable=False)
     high = Column(Numeric(precision=18, scale=8), nullable=False)
