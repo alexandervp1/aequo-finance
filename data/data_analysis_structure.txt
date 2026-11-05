@@ -1,0 +1,167 @@
+1. Load and save
+df = pd.read_csv("ps_data.csv", comment="#", usecols=[...])  # comment skips NASA header lines; usecols loads only what you need
+df = pd.read_sql("SELECT * FROM star_systems", engine)       # SQL -> DataFrame
+df.to_sql("table", engine, if_exists="append", index=False)  # DataFrame -> SQL
+df.to_csv("out.csv", index=False)                            # index=False avoids an extra index column
+
+2. Inspect (do this first, always)
+df.shape            # (rows, columns)
+df.head(10)         # first rows (.tail() for the last)
+df.info()           # columns, dtypes, non-null counts, memory
+df.describe()       # count, mean, std, min, quartiles, max for numeric columns
+df.dtypes           # type of each column
+df.columns          # column names
+df.isna().sum()     # nulls per column
+df.nunique()        # unique values per column
+df["col"].value_counts()   # frequency of each value (the most-used method in EDA)
+df["col"].unique()         # list of distinct values
+df.sample(5)               # random rows, better than head() for spotting weirdness
+
+3. Select columns and rows
+df["pl_name"]                    # one column -> Series
+df[["pl_name", "pl_rade"]]       # several columns -> DataFrame (note the double brackets)
+df.loc[0:5, "pl_name"]           # by label: rows 0 to 5 INCLUSIVE, column by name
+df.loc[df["pl_rade"] > 2, ["pl_name", "pl_rade"]]  # rows by condition + chosen columns
+df.iloc[0:5, 0:3]                # by position: rows 0-4 (end EXCLUDED), first 3 columns
+
+Rule of thumb: loc uses names and conditions, iloc uses integer positions.
+
+4. Filter rows
+df[df["default_flag"] == 1]                              # one condition
+df[(df["pl_eqt"] > 200) & (df["pl_eqt"] < 320)]          # AND -> &   (parentheses required)
+df[(df["disc_year"] < 2000) | (df["disc_year"] > 2020)]  # OR  -> |
+df[~df["hostname"].isna()]                               # NOT -> ~
+df[df["discoverymethod"].isin(["Transit", "Radial Velocity"])]
+df["pl_eqt"].between(200, 320)                           # cleaner version of the range filter
+df.query("pl_rade > 2 and disc_year >= 2015")            # SQL-like string syntax, readable for long filters
+5. Clean
+
+Missing values
+
+python
+df.isna()                        # True/False mask   (.notna() is the opposite)
+df.dropna()                      # drop rows with ANY null
+df.dropna(subset=["pl_rade"])    # drop only if that column is null (most useful form)
+df["pl_rade"].fillna(0)          # replace nulls (use the median/mean with care: .fillna(df["pl_rade"].median()))
+
+Duplicates
+
+df.duplicated(subset="hostname").sum()        # how many duplicates
+df.drop_duplicates(subset="hostname")         # keeps first by default; keep="last" or keep=False also exist
+
+Remember your earlier bug: it must be called on the DataFrame, not on a single column you assign back.
+
+Types
+
+python
+df["disc_year"] = df["disc_year"].astype("Int64")        # nullable integer (plain int fails with NaN)
+df["pl_pubdate"] = pd.to_datetime(df["pl_pubdate"])      # string -> datetime
+df["x"] = pd.to_numeric(df["x"], errors="coerce")        # bad values become NaN instead of crashing
+
+Rename / drop
+
+df = df.rename(columns={"pl_rade": "radius_earth"})
+df = df.drop(columns=["rowupdate"])
+
+Strings (.str accessor)
+
+df["hostname"].str.strip()                  # remove surrounding spaces
+df["hostname"].str.lower()                  # also .upper(), .title()
+df["pl_name"].str.contains("Kepler")        # boolean mask, great for filtering
+df["pl_name"].str.replace("-", " ")
+df["pl_name"].str.split(" ").str[0]         # split and take the first piece
+
+Dates (.dt accessor)
+
+df["pl_pubdate"].dt.year      # also .month, .day, .dayofweek
+
+6. Create and transform columns
+
+df["radius_km"] = df["pl_rade"] * 6371           # vectorized math, no loops
+df = df.assign(log_mass=np.log10(df["pl_bmasse"]))  # creates a column and returns a new DataFrame (chainable)
+
+df["size"] = np.where(df["pl_rade"] > 2, "large", "small")   # if/else per row
+df["bucket"] = pd.cut(df["pl_rade"], bins=[0, 1.5, 4, 10, 100],
+                      labels=["rocky", "mini-Neptune", "Neptune", "giant"])  # bins by value ranges
+pd.qcut(df["pl_rade"], q=4)                      # bins with equal NUMBER of rows (quartiles)
+
+df["discoverymethod"].map({"Transit": "T"})      # replace values using a dict
+df["pl_rade"].apply(lambda x: x ** 2)            # custom function per value (slow; use only if no vectorized option)
+df["col"].clip(lower=0, upper=100)               # cap outliers
+
+7. Sort and rank
+
+df.sort_values("pl_rade", ascending=False)
+df.sort_values(["disc_year", "pl_name"])         # multiple keys
+df.nlargest(10, "pl_rade")                       # top N, faster than sort + head (.nsmallest too)
+df["pl_rade"].rank()                             # rank of each value
+df.reset_index(drop=True)                        # rebuild a clean 0..n index after filtering/sorting
+
+8. Aggregate (the heart of data analysis)
+
+df["pl_rade"].mean()      # also .median(), .std(), .min(), .max(), .sum(), .count(), .quantile(0.9)
+
+df.groupby("discoverymethod")["pl_rade"].mean()          # mean radius per method
+
+df.groupby("disc_year").agg(
+    n_planets=("pl_name", "count"),
+    avg_radius=("pl_rade", "mean"),
+    max_mass=("pl_bmasse", "max"),
+)                                                        # several named aggregations at once (best pattern)
+
+df.groupby(["disc_year", "discoverymethod"]).size()      # count per combination
+df.groupby("disc_year").size().reset_index(name="n")     # turn the result back into a DataFrame
+
+pd.pivot_table(df, index="disc_year", columns="discoverymethod",
+               values="pl_name", aggfunc="count", fill_value=0)   # Excel-style cross table
+pd.crosstab(df["disc_year"], df["discoverymethod"])      # quick frequency table between two categories
+df.corr(numeric_only=True)                               # correlation matrix
+
+9. Combine tables
+
+pd.merge(planets, stars, on="hostname", how="left")      # SQL JOIN; how = inner | left | right | outer
+pd.concat([df1, df2], ignore_index=True)                 # stack rows (axis=1 to put side by side)
+
+Same logic as SQL: inner keeps matches only, left keeps everything from the left table. Check shape before and after a merge to catch accidental row multiplication.
+
+10. Reshape
+
+df.melt(id_vars="hostname", value_vars=["st_mass", "st_rad"])  # wide -> long (needed by Seaborn/Plotly often)
+df.pivot(index="hostname", columns="variable", values="value") # long -> wide
+
+11. Quick plots from pandas
+
+df["pl_rade"].plot.hist(bins=50)
+df.groupby("disc_year").size().plot()          # line chart of discoveries per year
+df.plot.scatter(x="st_mass", y="pl_rade")
+
+Habits that matter more than any single function:
+
+Avoid inplace=True. Just reassign: df = df.dropna(). It’s clearer and inplace is being phased out.
+Use .copy() after filtering if you’ll modify the result, otherwise you’ll hit SettingWithCopyWarning.
+
+Chain methods for readable pipelines: (IMPORTANT)
+
+  result = (
+      df[df["default_flag"] == 1]
+      .dropna(subset=["pl_rade"])
+      .groupby("discoverymethod")
+      .agg(n=("pl_name", "count"), avg_r=("pl_rade", "mean"))
+      .sort_values("n", ascending=False)
+  )
+
+Prefer vectorized operations (df["a"] * 2) over apply or loops. It’s often 100x faster.
+Check shape and isna().sum() after every step so you know what each operation did.
+
+If you master sections 2, 4, 5, 8 and 9, you’ll cover most real work.
+
+
+PSQL 
+Other prompt symbols you’ll see
+
+The character after # tells you what psql is waiting for:
+
+=# ready for a new command
+-# waiting for more of the command (usually a missing ;)
+(# you opened a parenthesis and haven’t closed it
+'# or "# you opened a quote and haven’t closed it
